@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Invite Helper — device-side decrypt (v2)</title>
+  <title>Invite Helper — device-side decrypt (v3)</title>
   <meta name="referrer" content="no-referrer" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' https://cdn.jsdelivr.net; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' https://cdn.jsdelivr.net;"/>
   <style>
@@ -27,10 +27,10 @@
   </style>
 </head>
 <body>
-  <h1>Invite Helper — device-side decrypt (v2)</h1>
-  <p class="card">Open this page over <strong>HTTPS</strong> (GitHub Pages works). Put your encrypted invite in the
-     <code>#ek=...</code> fragment of this page’s URL or paste it below. Then scan the device’s QR to deliver the
-     ciphertext to <em>http://device.local:6464</em> (the device decrypts locally).</p>
+  <h1>Invite Helper — device-side decrypt (v3)</h1>
+  <p class="card">Open over <strong>HTTPS</strong> (GitHub Pages works). Put your encrypted invite in the
+     <code>#ek=...</code> fragment or paste below. Then scan the device’s QR to deliver the ciphertext to
+     <em>http://device.local:6464</em> (device decrypts locally).</p>
 
   <div class="card">
     <label for="ek">Encrypted invite (ciphertext)</label>
@@ -57,7 +57,7 @@
       <input id="deviceUrl" type="text" placeholder="Paste device URL here (e.g., http://deck.local:6464/join?code=LAN-TEST)" />
       <button id="deliver" class="primary">Deliver to device</button>
     </div>
-    <small class="mono">Tip: delivery uses <code>location.href = http://device.../join?code=...&ek=...</code> to avoid mixed-content/CORS.</small>
+    <small class="mono">Delivery uses <code>location.href = http://device.../join?code=...&ek=...</code> to avoid mixed-content/CORS.</small>
   </div>
 
   <div class="card">
@@ -65,7 +65,7 @@
     <div id="log"></div>
   </div>
 
-  <!-- Fallback QR decoder for photo snapshots -->
+  <!-- jsQR for both photo and live-frame decoding -->
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
   <script>
     const $ = (id) => document.getElementById(id);
@@ -101,47 +101,90 @@
     });
     $('clear').addEventListener('click', () => { ekInput.value = ''; setStatus('Cleared.'); });
 
-    // 2) Live camera scan using BarcodeDetector + getUserMedia (HTTPS required)
-    let stream, rafId, detector;
+    // Live camera: try BarcodeDetector; if unavailable, fall back to getUserMedia + jsQR frame decoding
+    let stream, rafId, detector, useJsQrFrames = false, canvas, ctx;
+
     async function startLiveScan() {
       try {
-        if (!('BarcodeDetector' in window)) throw new Error('BarcodeDetector API not supported.');
-        detector = new BarcodeDetector({ formats: ['qr_code'] });
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        const supportsDetector = ('BarcodeDetector' in window);
+        if (supportsDetector) {
+          detector = new BarcodeDetector({ formats: ['qr_code'] });
+        } else {
+          useJsQrFrames = true;
+          canvas = document.createElement('canvas');
+          ctx = canvas.getContext('2d');
+        }
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+        video.setAttribute('playsinline', 'true');
         video.srcObject = stream;
         await video.play();
         video.style.display = 'block';
         setStatus('Camera active — point at the device QR.');
-        scanLoop();
+
+        if (useJsQrFrames) {
+          scanLoopJsQR();
+        } else {
+          scanLoopDetector();
+        }
       } catch (e) {
-        setStatus('Live scan unavailable: ' + e.message, 'warn');
+        setStatus('Live scan unavailable: ' + (e.message || e), 'warn');
         log('Live scan error: ' + e);
       }
     }
-    async function scanLoop() {
+
+    async function scanLoopDetector() {
       try {
         const barcodes = await detector.detect(video);
         if (barcodes && barcodes[0]) {
           const text = barcodes[0].rawValue || barcodes[0].rawValue;
           stopLive();
-          log('QR (live) scanned: ' + text);
+          log('QR (live-detector) scanned: ' + text);
           deviceUrl.value = text;
           setStatus('QR scanned — ready to deliver.', 'ok');
+          return;
         }
-      } catch {}
-      rafId = requestAnimationFrame(scanLoop);
+      } catch(e) {
+        useJsQrFrames = true;
+        canvas = document.createElement('canvas');
+        ctx = canvas.getContext('2d');
+        return scanLoopJsQR();
+      }
+      rafId = requestAnimationFrame(scanLoopDetector);
     }
+
+    function scanLoopJsQR() {
+      try {
+        const w = video.videoWidth || 640;
+        const h = video.videoHeight || 480;
+        if (!w || !h) { return rafId = requestAnimationFrame(scanLoopJsQR); }
+        canvas.width = w; canvas.height = h;
+        ctx.drawImage(video, 0, 0, w, h);
+        const img = ctx.getImageData(0, 0, w, h);
+        const res = jsQR(img.data, img.width, img.height);
+        if (res && res.data) {
+          stopLive();
+          log('QR (live-jsQR) scanned: ' + res.data);
+          deviceUrl.value = res.data;
+          setStatus('QR scanned — ready to deliver.', 'ok');
+          return;
+        }
+      } catch(e) {
+        log('jsQR frame error: ' + e);
+      }
+      rafId = requestAnimationFrame(scanLoopJsQR);
+    }
+
     function stopLive() {
       if (rafId) cancelAnimationFrame(rafId);
-      if (stream) { stream.getTracks().forEach(t => t.stop()); }
+      if (stream) { try { stream.getTracks().forEach(t => t.stop()); } catch(_){} }
       video.srcObject = null;
       video.style.display = 'none';
     }
 
-    $('scanLive').addEventListener('click', startLiveScan);
+    document.getElementById('scanLive').addEventListener('click', startLiveScan);
 
-    // 3) Photo fallback using jsQR (works on iOS without live camera)
-    $('scanPhoto').addEventListener('click', () => photo.click());
+    // Photo fallback using jsQR (works on iOS without live camera)
+    document.getElementById('scanPhoto').addEventListener('click', () => photo.click());
     photo.addEventListener('change', (e) => {
       const file = e.target.files && e.target.files[0];
       if (!file) return;
@@ -165,14 +208,14 @@
       img.src = URL.createObjectURL(file);
     });
 
-    // 4) Manual device URL entry
-    $('manual').addEventListener('click', () => {
+    // Manual device URL entry
+    document.getElementById('manual').addEventListener('click', () => {
       deviceUrl.focus();
       setStatus('Paste device URL (e.g., http://deck.local:6464/join?code=LAN-TEST).');
     });
 
-    // 5) Delivery by navigation to avoid HTTPS→HTTP mixed-content fetch/CORS
-    $('deliver').addEventListener('click', () => {
+    // Delivery by navigation
+    document.getElementById('deliver').addEventListener('click', () => {
       const urlText = deviceUrl.value.trim();
       const ek = ekInput.value.trim();
       if (!urlText) return setStatus('Missing device URL. Scan QR or paste it.', 'warn');
