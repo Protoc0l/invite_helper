@@ -1,237 +1,148 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Invite Helper — device-side decrypt (v3)</title>
-  <meta name="referrer" content="no-referrer" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' https://cdn.jsdelivr.net; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' https://cdn.jsdelivr.net;"/>
-  <style>
-    :root { --fg:#0b1220; --muted:#6b7280; --ok:#0e7a0d; --warn:#b45309; --err:#b91c1c; }
-    body{font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin:18px; color:var(--fg); max-width:740px}
-    h1{font-size:1.25rem;margin:0 0 8px}
-    .card{border:1px solid #e5e7eb; border-radius:12px; padding:14px; margin:10px 0; box-shadow:0 1px 2px rgba(0,0,0,.03)}
-    label{font-size:.9rem; color:var(--muted)}
-    input[type=text]{width:100%; padding:10px 12px; border:1px solid #d1d5db; border-radius:10px; font-size:1rem}
-    button{padding:10px 12px; border-radius:10px; border:1px solid #d1d5db; background:#fff; cursor:pointer; font-size:1rem}
-    button.primary{background:#111827; color:#fff; border-color:#111827}
-    button.ghost{background:#fff}
-    button+button{margin-left:8px}
-    .row{display:flex; gap:8px; flex-wrap:wrap}
-    .row > * { flex:1 1 auto }
-    #video{width:100%; max-width:420px; background:#000; border-radius:10px; display:none}
-    #status{font-size:.95rem; margin-top:6px}
-    #status.ok{color:var(--ok)} #status.warn{color:var(--warn)} #status.err{color:var(--err)}
-    #log{white-space:pre-wrap; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:.85rem; color:#374151; background:#f9fafb; border:1px solid #e5e7eb; padding:10px; border-radius:8px; max-height:220px; overflow:auto}
-    small.mono{font-family:ui-monospace, SFMono-Regular, Menlo, monospace;}
-  </style>
-</head>
-<body>
-  <h1>Invite Helper — device-side decrypt (v3)</h1>
-  <p class="card">Open over <strong>HTTPS</strong> (GitHub Pages works). Put your encrypted invite in the
-     <code>#ek=...</code> fragment or paste below. Then scan the device’s QR to deliver the ciphertext to
-     <em>http://device.local:6464</em> (device decrypts locally).</p>
+// app.js
+import { BrowserQRCodeReader } from "https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/+esm";
 
-  <div class="card">
-    <label for="ek">Encrypted invite (ciphertext)</label>
-    <input id="ek" type="text" inputmode="text" autocomplete="off" placeholder="ek=... or the bare base64url token" />
-    <div class="row" style="margin-top:8px">
-      <button id="copy" class="ghost">Copy invite</button>
-      <button id="clear" class="ghost">Clear</button>
-    </div>
-    <div id="status"></div>
-  </div>
+// Shorthand and elements
+const $ = (id) => document.getElementById(id);
+const ekInput   = $('ek');
+const statusEl  = $('status');
+const logEl     = $('log');
+const videoEl   = $('video');
+const photoIn   = $('photo');
+const deviceUrl = $('deviceUrl');
 
-  <div class="card">
-    <div class="row">
-      <button id="scanLive" class="primary">Scan device QR (live camera)</button>
-      <button id="scanPhoto" class="ghost">Scan via photo</button>
-      <button id="manual" class="ghost">Manual device URL</button>
-    </div>
-    <video id="video" playsinline muted></video>
-    <input id="photo" type="file" accept="image/*" capture="environment" style="display:none" />
-  </div>
+function setStatus(msg, cls='') {
+  statusEl.className = cls;
+  statusEl.textContent = msg || '';
+}
+function log(msg) {
+  logEl.textContent += msg + "\n";
+  logEl.scrollTop = logEl.scrollHeight;
+}
 
-  <div class="card">
-    <div class="row">
-      <input id="deviceUrl" type="text" placeholder="Paste device URL here (e.g., http://deck.local:6464/join?code=LAN-TEST)" />
-      <button id="deliver" class="primary">Deliver to device</button>
-    </div>
-    <small class="mono">Delivery uses <code>location.href = http://device.../join?code=...&ek=...</code> to avoid mixed-content/CORS.</small>
-  </div>
+// 1) Read EK from fragment first (#ek=...), then query (?ek=...)
+(function initFromLocation() {
+  const hash = new URLSearchParams((location.hash || '').replace(/^#/, ''));
+  const qs   = new URLSearchParams(location.search);
+  const raw  = hash.get('ek') || qs.get('ek') || hash.get('key') || qs.get('key') || '';
+  if (raw) {
+    ekInput.value = raw.startsWith('ek=') ? raw.split('=')[1] : raw;
+    log('Loaded invite from URL fragment/query.');
+  }
+})();
 
-  <div class="card">
-    <strong>Log</strong>
-    <div id="log"></div>
-  </div>
+// 2) Copy / Clear
+$('copy')?.addEventListener('click', async () => {
+  const v = ekInput.value.trim();
+  if (!v) return setStatus('Nothing to copy.', 'warn');
+  try { await navigator.clipboard.writeText(v); setStatus('Copied invite to clipboard.', 'ok'); }
+  catch { setStatus('Copy failed — long-press to paste manually.', 'warn'); }
+});
+$('clear')?.addEventListener('click', () => { ekInput.value = ''; setStatus('Cleared.'); });
 
-  <!-- jsQR for both photo and live-frame decoding -->
-  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
-  <script>
-    const $ = (id) => document.getElementById(id);
-    const ekInput = $('ek');
-    const statusEl = $('status');
-    const logEl = $('log');
-    const video = $('video');
-    const photo = $('photo');
-    const deviceUrl = $('deviceUrl');
+// 3) LIVE scan (works on iOS Safari)
+let codeReader, liveControls, liveStream;
+async function startLiveScan() {
+  try {
+    setStatus('Starting camera…');
+    if (!codeReader) codeReader = new BrowserQRCodeReader();
 
-    function setStatus(msg, cls='') {
-      statusEl.className = cls;
-      statusEl.textContent = msg;
-    }
-    function log(msg){ logEl.textContent += msg + "\\n"; logEl.scrollTop = logEl.scrollHeight; }
+    // Request rear camera
+    const constraints = { video: { facingMode: { ideal: 'environment' } }, audio: false };
+    liveStream = await navigator.mediaDevices.getUserMedia(constraints);
+    videoEl.srcObject = liveStream;
+    await videoEl.play();
+    videoEl.style.display = 'block';
+    setStatus('Point camera at the QR code…');
 
-    // 1) Read ek from fragment first (#ek=...), then query (?ek=...)
-    (function initFromLocation() {
-      const hash = new URLSearchParams((location.hash||'').replace(/^#/, ''));
-      const qs = new URLSearchParams(location.search);
-      const raw = hash.get('ek') || qs.get('ek') || hash.get('key') || qs.get('key') || '';
-      if (raw) {
-        ekInput.value = raw.startsWith('ek=') ? raw.split('=')[1] : raw;
-        log('Loaded invite from URL fragment/query.');
-      }
-    })();
-
-    $('copy').addEventListener('click', async () => {
-      const v = ekInput.value.trim();
-      if (!v) return setStatus('Nothing to copy.', 'warn');
-      try { await navigator.clipboard.writeText(v); setStatus('Copied invite to clipboard.', 'ok'); }
-      catch { setStatus('Copy failed — long-press to paste manually.', 'warn'); }
-    });
-    $('clear').addEventListener('click', () => { ekInput.value = ''; setStatus('Cleared.'); });
-
-    // Live camera: try BarcodeDetector; if unavailable, fall back to getUserMedia + jsQR frame decoding
-    let stream, rafId, detector, useJsQrFrames = false, canvas, ctx;
-
-    async function startLiveScan() {
-      try {
-        const supportsDetector = ('BarcodeDetector' in window);
-        if (supportsDetector) {
-          detector = new BarcodeDetector({ formats: ['qr_code'] });
-        } else {
-          useJsQrFrames = true;
-          canvas = document.createElement('canvas');
-          ctx = canvas.getContext('2d');
-        }
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
-        video.setAttribute('playsinline', 'true');
-        video.srcObject = stream;
-        await video.play();
-        video.style.display = 'block';
-        setStatus('Camera active — point at the device QR.');
-
-        if (useJsQrFrames) {
-          scanLoopJsQR();
-        } else {
-          scanLoopDetector();
-        }
-      } catch (e) {
-        setStatus('Live scan unavailable: ' + (e.message || e), 'warn');
-        log('Live scan error: ' + e);
-      }
-    }
-
-    async function scanLoopDetector() {
-      try {
-        const barcodes = await detector.detect(video);
-        if (barcodes && barcodes[0]) {
-          const text = barcodes[0].rawValue || barcodes[0].rawValue;
-          stopLive();
-          log('QR (live-detector) scanned: ' + text);
+    // Decode continuously until we get a result
+    liveControls = await codeReader.decodeFromVideoDevice(
+      null,
+      videoEl,
+      (result, err) => {
+        if (result) {
+          const text = result.getText();
           deviceUrl.value = text;
           setStatus('QR scanned — ready to deliver.', 'ok');
-          return;
+          log('QR (live) scanned: ' + text);
+          stopLiveScan();
         }
-      } catch(e) {
-        useJsQrFrames = true;
-        canvas = document.createElement('canvas');
-        ctx = canvas.getContext('2d');
-        return scanLoopJsQR();
       }
-      rafId = requestAnimationFrame(scanLoopDetector);
-    }
+    );
+  } catch (e) {
+    console.error(e);
+    setStatus('Live scan failed — use Photo Scan instead.', 'warn');
+    log('Live scan error: ' + e);
+  }
+}
+function stopLiveScan() {
+  try { liveControls?.stop(); } catch {}
+  if (liveStream) {
+    liveStream.getTracks().forEach(t => t.stop());
+    liveStream = null;
+  }
+  videoEl.pause();
+  videoEl.srcObject = null;
+  videoEl.style.display = 'none';
+}
 
-    function scanLoopJsQR() {
-      try {
-        const w = video.videoWidth || 640;
-        const h = video.videoHeight || 480;
-        if (!w || !h) { return rafId = requestAnimationFrame(scanLoopJsQR); }
-        canvas.width = w; canvas.height = h;
-        ctx.drawImage(video, 0, 0, w, h);
-        const img = ctx.getImageData(0, 0, w, h);
-        const res = jsQR(img.data, img.width, img.height);
-        if (res && res.data) {
-          stopLive();
-          log('QR (live-jsQR) scanned: ' + res.data);
-          deviceUrl.value = res.data;
-          setStatus('QR scanned — ready to deliver.', 'ok');
-          return;
-        }
-      } catch(e) {
-        log('jsQR frame error: ' + e);
+$('scanLive')?.addEventListener('click', startLiveScan);
+window.addEventListener('beforeunload', stopLiveScan);
+
+// 4) PHOTO scan (maximum compatibility; great on iOS)
+$('scanPhoto')?.addEventListener('click', () => photoIn.click());
+photoIn?.addEventListener('change', async (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+
+  const imgURL = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = async () => {
+    try {
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      // Lazy-import jsQR as an ES module
+      const { default: jsQR } = await import("https://cdn.jsdelivr.net/npm/jsqr@1.4.0/+esm");
+      const imageData = ctx.getImageData(0, 0, c.width, c.height);
+      const res = jsQR(imageData.data, c.width, c.height);
+      if (res?.data) {
+        deviceUrl.value = res.data;
+        setStatus('QR scanned — ready to deliver.', 'ok');
+        log('QR (photo) scanned: ' + res.data);
+      } else {
+        setStatus('No QR found in photo. Try again.', 'warn');
       }
-      rafId = requestAnimationFrame(scanLoopJsQR);
+    } catch (err) {
+      console.error(err);
+      setStatus('Photo scan failed.', 'err');
+    } finally {
+      URL.revokeObjectURL(imgURL);
     }
+  };
+  img.onerror = () => { setStatus('Failed to load image.', 'err'); URL.revokeObjectURL(imgURL); };
+  img.src = imgURL;
+});
 
-    function stopLive() {
-      if (rafId) cancelAnimationFrame(rafId);
-      if (stream) { try { stream.getTracks().forEach(t => t.stop()); } catch(_){} }
-      video.srcObject = null;
-      video.style.display = 'none';
-    }
+// 5) Manual URL helper
+$('manual')?.addEventListener('click', () => {
+  deviceUrl.focus();
+  setStatus('Paste device URL (e.g., http://deck.local:6464/join?code=LAN-TEST).');
+});
 
-    document.getElementById('scanLive').addEventListener('click', startLiveScan);
-
-    // Photo fallback using jsQR (works on iOS without live camera)
-    document.getElementById('scanPhoto').addEventListener('click', () => photo.click());
-    photo.addEventListener('change', (e) => {
-      const file = e.target.files && e.target.files[0];
-      if (!file) return;
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0);
-        const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const res = jsQR(data, width, height);
-        if (res && res.data) {
-          log('QR (photo) scanned: ' + res.data);
-          deviceUrl.value = res.data;
-          setStatus('QR scanned — ready to deliver.', 'ok');
-        } else {
-          setStatus('Could not find a QR in that photo. Try again.', 'warn');
-        }
-      };
-      img.onerror = () => setStatus('Failed to load image.', 'err');
-      img.src = URL.createObjectURL(file);
-    });
-
-    // Manual device URL entry
-    document.getElementById('manual').addEventListener('click', () => {
-      deviceUrl.focus();
-      setStatus('Paste device URL (e.g., http://deck.local:6464/join?code=LAN-TEST).');
-    });
-
-    // Delivery by navigation
-    document.getElementById('deliver').addEventListener('click', () => {
-      const urlText = deviceUrl.value.trim();
-      const ek = ekInput.value.trim();
-      if (!urlText) return setStatus('Missing device URL. Scan QR or paste it.', 'warn');
-      if (!ek) return setStatus('Missing invite. Paste ek=... or include #ek= in this page URL.', 'warn');
-      try {
-        const u = new URL(urlText);
-        const ekValue = ek.startsWith('ek=') ? ek.split('=')[1] : ek;
-        u.searchParams.set('ek', ekValue);
-        log('Navigating to device: ' + u.toString());
-        location.href = u.toString();
-      } catch (e) {
-        setStatus('Invalid device URL: ' + e, 'err');
-      }
-    });
-
-    window.addEventListener('beforeunload', stopLive);
-  </script>
-</body>
-</html>
+// 6) Deliver by navigation (avoids HTTPS→HTTP CORS/mixed-content fetch)
+$('deliver')?.addEventListener('click', () => {
+  const urlText = deviceUrl.value.trim();
+  const ek = ekInput.value.trim();
+  if (!urlText) return setStatus('Missing device URL. Scan QR or paste it.', 'warn');
+  if (!ek) return setStatus('Missing invite. Paste ek=... or include #ek= in this page URL.', 'warn');
+  try {
+    const u = new URL(urlText);
+    const ekValue = ek.startsWith('ek=') ? ek.split('=')[1] : ek;
+    u.searchParams.set('ek', ekValue);
+    log('Navigating to device: ' + u.toString());
+    location.href = u.toString();
+  } catch (e) {
+    setStatus('Invalid device URL: ' + e, 'err');
+  }
+});
