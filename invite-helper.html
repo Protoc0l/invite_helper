@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Invite Helper (Self‑Contained · Fragment‑Only)</title>
+  <meta name="referrer" content="no-referrer">
+  <style>
+    :root{
+      --bg:#0b0d10; --fg:#eef2f5; --muted:#9aa4af; --card:#12161b; --accent:#4da3ff;
+      --ok:#35c759; --warn:#ff9f0a; --err:#ff453a;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif; color:var(--fg); background:linear-gradient(180deg,#0b0d10,#0f141a 30%,#0b0d10);
+      display:flex; justify-content:center; padding:24px;
+    }
+    .wrap{width:100%; max-width:780px}
+    h1{font-size:1.35rem;margin:.2rem 0 0.4rem 0}
+    p{color:var(--muted);line-height:1.5;margin:.2rem 0 .8rem 0}
+    .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+    input[type=text], textarea{
+      width:100%; padding:12px 14px; background:#0c1117; color:var(--fg);
+      border:1px solid #1f2937; border-radius:12px; outline:none;
+    }
+    input[type=text]::placeholder{color:#6b7280}
+    button{
+      appearance:none; border:0; background:var(--accent); color:#001022; font-weight:700;
+      padding:10px 14px; border-radius:12px; cursor:pointer; box-shadow:0 8px 24px rgba(9,115,255,.22);
+    }
+    button:disabled{opacity:.55; cursor:not-allowed; box-shadow:none}
+    .btn-ghost{background:#0c1117;color:var(--fg);box-shadow:none;border:1px solid #1f2937}
+    .btn-ok{background:var(--ok); color:#001b08}
+    .btn-warn{background:var(--warn); color:#1c0b00}
+    .btn-err{background:var(--err); color:#2b0000}
+    video{width:100%; max-width:480px; border-radius:16px; background:#000; display:block}
+    code, pre{background:#0c1117; border:1px solid #1f2937; border-radius:12px; padding:10px; overflow:auto}
+    .muted{color:var(--muted)}
+    .status{margin:.4rem 0 .6rem; font-weight:600}
+    .grid{display:grid; gap:12px}
+    .card{background:var(--card); border:1px solid #1f2937; padding:16px; border-radius:16px}
+    .footer{font-size:.9rem; color:#7b8896}
+    a{color:#8cc2ff}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Invite Helper</h1>
+    <p>This page accepts an encrypted invite only from the URL fragment <code>#ek=…</code> (never query string). You can also paste it manually. When you scan the device’s QR, this page delivers the invite to the device URL encoded in the QR; the device does any decryption locally.</p>
+
+    <div class="card grid">
+      <label for="ek"><strong>Encrypted invite</strong> (<span class="muted">paste, or supply via <code>#ek=…</code> in the URL</span>)</label>
+      <input id="ek" placeholder="ek=... long base64url string" type="text" autocomplete="off" spellcheck="false" />
+      <div class="row">
+        <button id="copyBtn" title="Copy to clipboard">Copy</button>
+        <button class="btn-ghost" id="clearBtn" title="Clear the input">Clear</button>
+        <span class="muted" id="ekLen"></span>
+      </div>
+      <div id="status" class="status muted"></div>
+    </div>
+
+    <div class="card grid">
+      <div class="row">
+        <button id="scanBtn" title="Scan a QR code from the device">Scan device QR</button>
+        <button class="btn-ghost" id="stopBtn" disabled title="Stop scanning">Stop</button>
+      </div>
+      <video id="video" autoplay playsinline muted hidden></video>
+      <details>
+        <summary>What if QR scanning isn’t supported?</summary>
+        <p class="muted">Your browser needs the <code>BarcodeDetector</code> API and camera permissions over HTTPS. If unavailable, paste the device URL manually below and click <em>Deliver</em>.</p>
+      </details>
+      <label for="url">Device URL (fallback if you can’t scan)</label>
+      <input id="url" type="text" inputmode="url" placeholder="http(s)://device.local:6464/..." />
+      <div class="row">
+        <button class="btn-ok" id="deliverBtn">Deliver</button>
+      </div>
+    </div>
+
+    <div class="card grid">
+      <label for="log"><strong>Log</strong></label>
+      <pre id="log" style="min-height:120px"></pre>
+    </div>
+
+    <p class="footer">Security notes: this page uses only the URL <em>fragment</em> (<code>#ek</code>) to avoid server logs; it does not load any external scripts. For camera access, open this over HTTPS. Consider hosting with headers: <code>Content-Security-Policy: default-src 'self'</code>, <code>Referrer-Policy: no-referrer</code>, <code>Permissions-Policy: camera=(self)</code>.</p>
+  </div>
+
+<script>
+/* ---------------- Fragment-only invite handling ---------------- */
+const ekInput = document.getElementById('ek');
+const copyBtn = document.getElementById('copyBtn');
+const clearBtn = document.getElementById('clearBtn');
+const ekLen = document.getElementById('ekLen');
+const statusEl = document.getElementById('status');
+const logEl = document.getElementById('log');
+const video = document.getElementById('video');
+const scanBtn = document.getElementById('scanBtn');
+const stopBtn = document.getElementById('stopBtn');
+const deliverBtn = document.getElementById('deliverBtn');
+const urlInput = document.getElementById('url');
+
+function getFragmentEK(){
+  const hash = (location.hash||'').replace(/^#/,'');
+  const usp = new URLSearchParams(hash);
+  const raw = usp.get('ek') || '';
+  return raw.startsWith('ek=') ? raw.split('=').slice(1).join('=') : raw;
+}
+
+function setStatus(msg, tone="muted"){
+  statusEl.textContent = msg;
+  statusEl.className = "status " + (tone==="ok"?"ok":tone==="err"?"err":"muted");
+}
+
+function appendLog(msg){
+  const t = new Date().toLocaleTimeString();
+  logEl.textContent += `[${t}] ${msg}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function renderLen(){
+  const n = (ekInput.value||'').trim().length;
+  ekLen.textContent = n ? `${n} chars` : '';
+}
+
+function initFromFragment(){
+  const ek = getFragmentEK();
+  if (ek) {
+    ekInput.value = ek.trim();
+    renderLen();
+    appendLog("Loaded invite from fragment.");
+  }
+}
+
+copyBtn.addEventListener('click', async () => {
+  const v = ekInput.value.trim();
+  if (!v){ setStatus('No invite to copy.'); return; }
+  try { await navigator.clipboard.writeText(v); setStatus('Invite copied.', 'ok'); }
+  catch { setStatus('Copy failed — select text and copy manually.', 'err'); }
+});
+
+clearBtn.addEventListener('click', () => { ekInput.value=''; renderLen(); setStatus(''); });
+
+ekInput.addEventListener('input', renderLen);
+
+window.addEventListener('hashchange', initFromFragment);
+initFromFragment();
+renderLen();
+
+/* ---------------- QR scanning (no external libs) ---------------- */
+let stopStream = null;
+
+async function startScan(){
+  scanBtn.disabled = true;
+  stopBtn.disabled = false;
+  video.hidden = false;
+  setStatus('Starting camera — allow permission if prompted.');
+
+  // Check API support
+  const supported = 'BarcodeDetector' in window && Array.isArray(await BarcodeDetector.getSupportedFormats?.());
+  if (!supported || !(await BarcodeDetector.getSupportedFormats()).includes('qr_code')){
+    setStatus('BarcodeDetector API not supported for QR. Use fallback URL box.', 'warn');
+    appendLog('BarcodeDetector unsupported — falling back to manual URL.');
+    scanBtn.disabled = false;
+    stopBtn.disabled = true;
+    video.hidden = true;
+    return;
+  }
+
+  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio:false });
+  video.srcObject = stream;
+  await video.play();
+  const track = stream.getVideoTracks()[0];
+  stopStream = () => { track.stop(); video.srcObject=null; video.hidden=true; stopBtn.disabled=true; scanBtn.disabled=false; };
+
+  const detector = new BarcodeDetector({ formats: ['qr_code'] });
+
+  let running = true;
+  async function tick(){
+    if (!running) return;
+    try {
+      const bit = await createImageBitmap(video);
+      const codes = await detector.detect(bit);
+      bit.close?.();
+      if (codes && codes.length){
+        running = false;
+        stopStream();
+        const data = codes[0].rawValue || codes[0].rawValue || '';
+        appendLog('QR scanned: ' + (data.length>120 ? data.slice(0,120)+'…' : data));
+        setStatus('QR scanned — delivering invite...');
+        deliverInviteToDevice(data);
+        return;
+      }
+    } catch (e){
+      // keep trying
+    }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
+function stopScan(){
+  if (stopStream) stopStream();
+  setStatus('Scanning stopped.');
+}
+
+scanBtn.addEventListener('click', startScan);
+stopBtn.addEventListener('click', stopScan);
+
+/* ---------------- Deliver to device ---------------- */
+async function deliverInviteToDevice(url){
+  const invite = ekInput.value.trim();
+  if (!invite){ setStatus('No invite present. Paste or use #ek=… in URL.', 'err'); return; }
+  if (!url){ url = urlInput.value.trim(); }
+  if (!url){ setStatus('No device URL to deliver to. Scan QR or paste the URL.', 'err'); return; }
+
+  try{
+    appendLog('POST ' + url);
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      // Send only the raw invite string; device should verify/require its one-time code server-side.
+      body: invite
+    });
+    const text = await resp.text();
+    appendLog(`Device response: ${resp.status} — ${text}`);
+    setStatus('Delivered. Check the device.', 'ok');
+  }catch(e){
+    appendLog('Deliver failed: ' + e);
+    setStatus('Deliver failed. See log.', 'err');
+  }
+}
+
+deliverBtn.addEventListener('click', () => deliverInviteToDevice(urlInput.value.trim()));
+</script>
+</body>
+</html>
