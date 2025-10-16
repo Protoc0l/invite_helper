@@ -2,235 +2,193 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Invite Helper (Self‑Contained · Fragment‑Only)</title>
-  <meta name="referrer" content="no-referrer">
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Invite Helper — device-side decrypt (v2)</title>
+  <meta name="referrer" content="no-referrer" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' https://cdn.jsdelivr.net; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' https://cdn.jsdelivr.net;"/>
   <style>
-    :root{
-      --bg:#0b0d10; --fg:#eef2f5; --muted:#9aa4af; --card:#12161b; --accent:#4da3ff;
-      --ok:#35c759; --warn:#ff9f0a; --err:#ff453a;
-    }
-    *{box-sizing:border-box}
-    html,body{height:100%}
-    body{
-      margin:0; font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif; color:var(--fg); background:linear-gradient(180deg,#0b0d10,#0f141a 30%,#0b0d10);
-      display:flex; justify-content:center; padding:24px;
-    }
-    .wrap{width:100%; max-width:780px}
-    h1{font-size:1.35rem;margin:.2rem 0 0.4rem 0}
-    p{color:var(--muted);line-height:1.5;margin:.2rem 0 .8rem 0}
-    .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
-    input[type=text], textarea{
-      width:100%; padding:12px 14px; background:#0c1117; color:var(--fg);
-      border:1px solid #1f2937; border-radius:12px; outline:none;
-    }
-    input[type=text]::placeholder{color:#6b7280}
-    button{
-      appearance:none; border:0; background:var(--accent); color:#001022; font-weight:700;
-      padding:10px 14px; border-radius:12px; cursor:pointer; box-shadow:0 8px 24px rgba(9,115,255,.22);
-    }
-    button:disabled{opacity:.55; cursor:not-allowed; box-shadow:none}
-    .btn-ghost{background:#0c1117;color:var(--fg);box-shadow:none;border:1px solid #1f2937}
-    .btn-ok{background:var(--ok); color:#001b08}
-    .btn-warn{background:var(--warn); color:#1c0b00}
-    .btn-err{background:var(--err); color:#2b0000}
-    video{width:100%; max-width:480px; border-radius:16px; background:#000; display:block}
-    code, pre{background:#0c1117; border:1px solid #1f2937; border-radius:12px; padding:10px; overflow:auto}
-    .muted{color:var(--muted)}
-    .status{margin:.4rem 0 .6rem; font-weight:600}
-    .grid{display:grid; gap:12px}
-    .card{background:var(--card); border:1px solid #1f2937; padding:16px; border-radius:16px}
-    .footer{font-size:.9rem; color:#7b8896}
-    a{color:#8cc2ff}
+    :root { --fg:#0b1220; --muted:#6b7280; --ok:#0e7a0d; --warn:#b45309; --err:#b91c1c; }
+    body{font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin:18px; color:var(--fg); max-width:740px}
+    h1{font-size:1.25rem;margin:0 0 8px}
+    .card{border:1px solid #e5e7eb; border-radius:12px; padding:14px; margin:10px 0; box-shadow:0 1px 2px rgba(0,0,0,.03)}
+    label{font-size:.9rem; color:var(--muted)}
+    input[type=text]{width:100%; padding:10px 12px; border:1px solid #d1d5db; border-radius:10px; font-size:1rem}
+    button{padding:10px 12px; border-radius:10px; border:1px solid #d1d5db; background:#fff; cursor:pointer; font-size:1rem}
+    button.primary{background:#111827; color:#fff; border-color:#111827}
+    button.ghost{background:#fff}
+    button+button{margin-left:8px}
+    .row{display:flex; gap:8px; flex-wrap:wrap}
+    .row > * { flex:1 1 auto }
+    #video{width:100%; max-width:420px; background:#000; border-radius:10px; display:none}
+    #status{font-size:.95rem; margin-top:6px}
+    #status.ok{color:var(--ok)} #status.warn{color:var(--warn)} #status.err{color:var(--err)}
+    #log{white-space:pre-wrap; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:.85rem; color:#374151; background:#f9fafb; border:1px solid #e5e7eb; padding:10px; border-radius:8px; max-height:220px; overflow:auto}
+    small.mono{font-family:ui-monospace, SFMono-Regular, Menlo, monospace;}
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <h1>Invite Helper</h1>
-    <p>This page accepts an encrypted invite only from the URL fragment <code>#ek=…</code> (never query string). You can also paste it manually. When you scan the device’s QR, this page delivers the invite to the device URL encoded in the QR; the device does any decryption locally.</p>
+  <h1>Invite Helper — device-side decrypt (v2)</h1>
+  <p class="card">Open this page over <strong>HTTPS</strong> (GitHub Pages works). Put your encrypted invite in the
+     <code>#ek=...</code> fragment of this page’s URL or paste it below. Then scan the device’s QR to deliver the
+     ciphertext to <em>http://device.local:6464</em> (the device decrypts locally).</p>
 
-    <div class="card grid">
-      <label for="ek"><strong>Encrypted invite</strong> (<span class="muted">paste, or supply via <code>#ek=…</code> in the URL</span>)</label>
-      <input id="ek" placeholder="ek=... long base64url string" type="text" autocomplete="off" spellcheck="false" />
-      <div class="row">
-        <button id="copyBtn" title="Copy to clipboard">Copy</button>
-        <button class="btn-ghost" id="clearBtn" title="Clear the input">Clear</button>
-        <span class="muted" id="ekLen"></span>
-      </div>
-      <div id="status" class="status muted"></div>
+  <div class="card">
+    <label for="ek">Encrypted invite (ciphertext)</label>
+    <input id="ek" type="text" inputmode="text" autocomplete="off" placeholder="ek=... or the bare base64url token" />
+    <div class="row" style="margin-top:8px">
+      <button id="copy" class="ghost">Copy invite</button>
+      <button id="clear" class="ghost">Clear</button>
     </div>
-
-    <div class="card grid">
-      <div class="row">
-        <button id="scanBtn" title="Scan a QR code from the device">Scan device QR</button>
-        <button class="btn-ghost" id="stopBtn" disabled title="Stop scanning">Stop</button>
-      </div>
-      <video id="video" autoplay playsinline muted hidden></video>
-      <details>
-        <summary>What if QR scanning isn’t supported?</summary>
-        <p class="muted">Your browser needs the <code>BarcodeDetector</code> API and camera permissions over HTTPS. If unavailable, paste the device URL manually below and click <em>Deliver</em>.</p>
-      </details>
-      <label for="url">Device URL (fallback if you can’t scan)</label>
-      <input id="url" type="text" inputmode="url" placeholder="http(s)://device.local:6464/..." />
-      <div class="row">
-        <button class="btn-ok" id="deliverBtn">Deliver</button>
-      </div>
-    </div>
-
-    <div class="card grid">
-      <label for="log"><strong>Log</strong></label>
-      <pre id="log" style="min-height:120px"></pre>
-    </div>
-
-    <p class="footer">Security notes: this page uses only the URL <em>fragment</em> (<code>#ek</code>) to avoid server logs; it does not load any external scripts. For camera access, open this over HTTPS. Consider hosting with headers: <code>Content-Security-Policy: default-src 'self'</code>, <code>Referrer-Policy: no-referrer</code>, <code>Permissions-Policy: camera=(self)</code>.</p>
+    <div id="status"></div>
   </div>
 
-<script>
-/* ---------------- Fragment-only invite handling ---------------- */
-const ekInput = document.getElementById('ek');
-const copyBtn = document.getElementById('copyBtn');
-const clearBtn = document.getElementById('clearBtn');
-const ekLen = document.getElementById('ekLen');
-const statusEl = document.getElementById('status');
-const logEl = document.getElementById('log');
-const video = document.getElementById('video');
-const scanBtn = document.getElementById('scanBtn');
-const stopBtn = document.getElementById('stopBtn');
-const deliverBtn = document.getElementById('deliverBtn');
-const urlInput = document.getElementById('url');
+  <div class="card">
+    <div class="row">
+      <button id="scanLive" class="primary">Scan device QR (live camera)</button>
+      <button id="scanPhoto" class="ghost">Scan via photo</button>
+      <button id="manual" class="ghost">Manual device URL</button>
+    </div>
+    <video id="video" playsinline muted></video>
+    <input id="photo" type="file" accept="image/*" capture="environment" style="display:none" />
+  </div>
 
-function getFragmentEK(){
-  const hash = (location.hash||'').replace(/^#/,'');
-  const usp = new URLSearchParams(hash);
-  const raw = usp.get('ek') || '';
-  return raw.startsWith('ek=') ? raw.split('=').slice(1).join('=') : raw;
-}
+  <div class="card">
+    <div class="row">
+      <input id="deviceUrl" type="text" placeholder="Paste device URL here (e.g., http://deck.local:6464/join?code=LAN-TEST)" />
+      <button id="deliver" class="primary">Deliver to device</button>
+    </div>
+    <small class="mono">Tip: delivery uses <code>location.href = http://device.../join?code=...&ek=...</code> to avoid mixed-content/CORS.</small>
+  </div>
 
-function setStatus(msg, tone="muted"){
-  statusEl.textContent = msg;
-  statusEl.className = "status " + (tone==="ok"?"ok":tone==="err"?"err":"muted");
-}
+  <div class="card">
+    <strong>Log</strong>
+    <div id="log"></div>
+  </div>
 
-function appendLog(msg){
-  const t = new Date().toLocaleTimeString();
-  logEl.textContent += `[${t}] ${msg}\n`;
-  logEl.scrollTop = logEl.scrollHeight;
-}
+  <!-- Fallback QR decoder for photo snapshots -->
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const ekInput = $('ek');
+    const statusEl = $('status');
+    const logEl = $('log');
+    const video = $('video');
+    const photo = $('photo');
+    const deviceUrl = $('deviceUrl');
 
-function renderLen(){
-  const n = (ekInput.value||'').trim().length;
-  ekLen.textContent = n ? `${n} chars` : '';
-}
-
-function initFromFragment(){
-  const ek = getFragmentEK();
-  if (ek) {
-    ekInput.value = ek.trim();
-    renderLen();
-    appendLog("Loaded invite from fragment.");
-  }
-}
-
-copyBtn.addEventListener('click', async () => {
-  const v = ekInput.value.trim();
-  if (!v){ setStatus('No invite to copy.'); return; }
-  try { await navigator.clipboard.writeText(v); setStatus('Invite copied.', 'ok'); }
-  catch { setStatus('Copy failed — select text and copy manually.', 'err'); }
-});
-
-clearBtn.addEventListener('click', () => { ekInput.value=''; renderLen(); setStatus(''); });
-
-ekInput.addEventListener('input', renderLen);
-
-window.addEventListener('hashchange', initFromFragment);
-initFromFragment();
-renderLen();
-
-/* ---------------- QR scanning (no external libs) ---------------- */
-let stopStream = null;
-
-async function startScan(){
-  scanBtn.disabled = true;
-  stopBtn.disabled = false;
-  video.hidden = false;
-  setStatus('Starting camera — allow permission if prompted.');
-
-  // Check API support
-  const supported = 'BarcodeDetector' in window && Array.isArray(await BarcodeDetector.getSupportedFormats?.());
-  if (!supported || !(await BarcodeDetector.getSupportedFormats()).includes('qr_code')){
-    setStatus('BarcodeDetector API not supported for QR. Use fallback URL box.', 'warn');
-    appendLog('BarcodeDetector unsupported — falling back to manual URL.');
-    scanBtn.disabled = false;
-    stopBtn.disabled = true;
-    video.hidden = true;
-    return;
-  }
-
-  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio:false });
-  video.srcObject = stream;
-  await video.play();
-  const track = stream.getVideoTracks()[0];
-  stopStream = () => { track.stop(); video.srcObject=null; video.hidden=true; stopBtn.disabled=true; scanBtn.disabled=false; };
-
-  const detector = new BarcodeDetector({ formats: ['qr_code'] });
-
-  let running = true;
-  async function tick(){
-    if (!running) return;
-    try {
-      const bit = await createImageBitmap(video);
-      const codes = await detector.detect(bit);
-      bit.close?.();
-      if (codes && codes.length){
-        running = false;
-        stopStream();
-        const data = codes[0].rawValue || codes[0].rawValue || '';
-        appendLog('QR scanned: ' + (data.length>120 ? data.slice(0,120)+'…' : data));
-        setStatus('QR scanned — delivering invite...');
-        deliverInviteToDevice(data);
-        return;
-      }
-    } catch (e){
-      // keep trying
+    function setStatus(msg, cls='') {
+      statusEl.className = cls;
+      statusEl.textContent = msg;
     }
-    requestAnimationFrame(tick);
-  }
-  requestAnimationFrame(tick);
-}
+    function log(msg){ logEl.textContent += msg + "\\n"; logEl.scrollTop = logEl.scrollHeight; }
 
-function stopScan(){
-  if (stopStream) stopStream();
-  setStatus('Scanning stopped.');
-}
+    // 1) Read ek from fragment first (#ek=...), then query (?ek=...)
+    (function initFromLocation() {
+      const hash = new URLSearchParams((location.hash||'').replace(/^#/, ''));
+      const qs = new URLSearchParams(location.search);
+      const raw = hash.get('ek') || qs.get('ek') || hash.get('key') || qs.get('key') || '';
+      if (raw) {
+        ekInput.value = raw.startsWith('ek=') ? raw.split('=')[1] : raw;
+        log('Loaded invite from URL fragment/query.');
+      }
+    })();
 
-scanBtn.addEventListener('click', startScan);
-stopBtn.addEventListener('click', stopScan);
-
-/* ---------------- Deliver to device ---------------- */
-async function deliverInviteToDevice(url){
-  const invite = ekInput.value.trim();
-  if (!invite){ setStatus('No invite present. Paste or use #ek=… in URL.', 'err'); return; }
-  if (!url){ url = urlInput.value.trim(); }
-  if (!url){ setStatus('No device URL to deliver to. Scan QR or paste the URL.', 'err'); return; }
-
-  try{
-    appendLog('POST ' + url);
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      // Send only the raw invite string; device should verify/require its one-time code server-side.
-      body: invite
+    $('copy').addEventListener('click', async () => {
+      const v = ekInput.value.trim();
+      if (!v) return setStatus('Nothing to copy.', 'warn');
+      try { await navigator.clipboard.writeText(v); setStatus('Copied invite to clipboard.', 'ok'); }
+      catch { setStatus('Copy failed — long-press to paste manually.', 'warn'); }
     });
-    const text = await resp.text();
-    appendLog(`Device response: ${resp.status} — ${text}`);
-    setStatus('Delivered. Check the device.', 'ok');
-  }catch(e){
-    appendLog('Deliver failed: ' + e);
-    setStatus('Deliver failed. See log.', 'err');
-  }
-}
+    $('clear').addEventListener('click', () => { ekInput.value = ''; setStatus('Cleared.'); });
 
-deliverBtn.addEventListener('click', () => deliverInviteToDevice(urlInput.value.trim()));
-</script>
+    // 2) Live camera scan using BarcodeDetector + getUserMedia (HTTPS required)
+    let stream, rafId, detector;
+    async function startLiveScan() {
+      try {
+        if (!('BarcodeDetector' in window)) throw new Error('BarcodeDetector API not supported.');
+        detector = new BarcodeDetector({ formats: ['qr_code'] });
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        video.srcObject = stream;
+        await video.play();
+        video.style.display = 'block';
+        setStatus('Camera active — point at the device QR.');
+        scanLoop();
+      } catch (e) {
+        setStatus('Live scan unavailable: ' + e.message, 'warn');
+        log('Live scan error: ' + e);
+      }
+    }
+    async function scanLoop() {
+      try {
+        const barcodes = await detector.detect(video);
+        if (barcodes && barcodes[0]) {
+          const text = barcodes[0].rawValue || barcodes[0].rawValue;
+          stopLive();
+          log('QR (live) scanned: ' + text);
+          deviceUrl.value = text;
+          setStatus('QR scanned — ready to deliver.', 'ok');
+        }
+      } catch {}
+      rafId = requestAnimationFrame(scanLoop);
+    }
+    function stopLive() {
+      if (rafId) cancelAnimationFrame(rafId);
+      if (stream) { stream.getTracks().forEach(t => t.stop()); }
+      video.srcObject = null;
+      video.style.display = 'none';
+    }
+
+    $('scanLive').addEventListener('click', startLiveScan);
+
+    // 3) Photo fallback using jsQR (works on iOS without live camera)
+    $('scanPhoto').addEventListener('click', () => photo.click());
+    photo.addEventListener('change', (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const res = jsQR(data, width, height);
+        if (res && res.data) {
+          log('QR (photo) scanned: ' + res.data);
+          deviceUrl.value = res.data;
+          setStatus('QR scanned — ready to deliver.', 'ok');
+        } else {
+          setStatus('Could not find a QR in that photo. Try again.', 'warn');
+        }
+      };
+      img.onerror = () => setStatus('Failed to load image.', 'err');
+      img.src = URL.createObjectURL(file);
+    });
+
+    // 4) Manual device URL entry
+    $('manual').addEventListener('click', () => {
+      deviceUrl.focus();
+      setStatus('Paste device URL (e.g., http://deck.local:6464/join?code=LAN-TEST).');
+    });
+
+    // 5) Delivery by navigation to avoid HTTPS→HTTP mixed-content fetch/CORS
+    $('deliver').addEventListener('click', () => {
+      const urlText = deviceUrl.value.trim();
+      const ek = ekInput.value.trim();
+      if (!urlText) return setStatus('Missing device URL. Scan QR or paste it.', 'warn');
+      if (!ek) return setStatus('Missing invite. Paste ek=... or include #ek= in this page URL.', 'warn');
+      try {
+        const u = new URL(urlText);
+        const ekValue = ek.startsWith('ek=') ? ek.split('=')[1] : ek;
+        u.searchParams.set('ek', ekValue);
+        log('Navigating to device: ' + u.toString());
+        location.href = u.toString();
+      } catch (e) {
+        setStatus('Invalid device URL: ' + e, 'err');
+      }
+    });
+
+    window.addEventListener('beforeunload', stopLive);
+  </script>
 </body>
 </html>
